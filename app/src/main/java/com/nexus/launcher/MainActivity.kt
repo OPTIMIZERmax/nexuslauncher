@@ -67,7 +67,7 @@ class MainActivity : Activity() {
         val apps = allApps()
         val outer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setBackgroundColor(background)
+            setBackgroundColor(this@MainActivity.background)
             setPadding(dp(22), dp(28), dp(10), dp(12))
         }
         content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -89,7 +89,7 @@ class MainActivity : Activity() {
             setHintTextColor(muted)
             setTextColor(primary)
             textSize = 15f
-            singleLine = true
+            setSingleLine(true)
             background = rounded(Color.rgb(34, 32, 40), 18)
             setPadding(dp(16), 0, dp(16), 0)
         }
