@@ -1,12 +1,16 @@
 package com.nexus.launcher
 
 import android.app.Activity
+import android.app.AlertDialog
+import android.app.role.RoleManager
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
@@ -14,36 +18,36 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import android.text.Editable
 import android.text.TextWatcher
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.abs
 
 class MainActivity : Activity() {
     private val red = Color.rgb(255, 65, 80)
-    private val background = Color.rgb(12, 12, 18)
-    private val primary = Color.rgb(246, 244, 246)
-    private val muted = Color.rgb(160, 158, 168)
-    private lateinit var content: LinearLayout
-    private lateinit var scroll: ScrollView
-    private lateinit var alphabetRail: LinearLayout
-    private var query = ""
-    private val sectionViews = mutableMapOf<Char, View>()
-    private val favorites = mutableSetOf<String>()
+    private val background = Color.rgb(10, 10, 16)
+    private val primary = Color.rgb(248, 247, 250)
+    private val muted = Color.rgb(165, 162, 174)
+    private lateinit var root: LinearLayout
+    private lateinit var drawerContent: LinearLayout
+    private lateinit var drawerScroll: ScrollView
+    private var startY = 0f
+    private var drawerOpen = false
 
     data class AppEntry(val label: String, val packageName: String, val icon: android.graphics.drawable.Drawable)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        favorites.addAll(getSharedPreferences("nexus", MODE_PRIVATE).getStringSet("favorites", emptySet()) ?: emptySet())
-        render()
+        showHome()
+        if (!getSharedPreferences("nexus", MODE_PRIVATE).getBoolean("launcher_choice_shown", false)) {
+            root.postDelayed({ showLauncherChoice() }, 450)
+        }
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
-
-    private fun rounded(color: Int, radius: Int): GradientDrawable =
-        GradientDrawable().apply { setColor(color); cornerRadius = dp(radius).toFloat() }
 
     private fun label(text: String, size: Float, color: Int, bold: Boolean = false): TextView =
         TextView(this).apply {
@@ -53,36 +57,139 @@ class MainActivity : Activity() {
             if (bold) typeface = Typeface.create("sans-serif", Typeface.BOLD)
         }
 
+    private fun wallpaperBackground(): GradientDrawable = GradientDrawable(
+        GradientDrawable.Orientation.TL_BR,
+        intArrayOf(Color.rgb(20, 12, 22), Color.rgb(9, 10, 17), Color.rgb(22, 8, 16))
+    )
+
+    private fun showHome() {
+        drawerOpen = false
+        root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            background = wallpaperBackground()
+            setPadding(dp(22), dp(42), dp(22), dp(16))
+            isClickable = true
+            setOnTouchListener { _, event ->
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> { startY = event.y; true }
+                    MotionEvent.ACTION_UP -> {
+                        val delta = event.y - startY
+                        if (delta < -dp(55)) openDrawer()
+                        true
+                    }
+                    else -> true
+                }
+            }
+        }
+
+        val clock = label(SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date()), 54f, primary, true)
+        clock.gravity = Gravity.CENTER
+        root.addView(clock, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        root.addView(label(SimpleDateFormat("EEEE, d MMMM", Locale.getDefault()).format(Date()), 14f, muted).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, dp(4), 0, dp(12))
+        })
+
+        root.addView(label("N E X U S", 13f, red, true).apply {
+            gravity = Gravity.CENTER
+            letterSpacing = 0.18f
+            setPadding(0, dp(8), 0, 0)
+        })
+
+        val spacer = View(this)
+        root.addView(spacer, LinearLayout.LayoutParams(1, 0, 1f))
+
+        val drawerButton = TextView(this).apply {
+            text = "↑   ALL APPS"
+            textSize = 12f
+            letterSpacing = 0.12f
+            gravity = Gravity.CENTER
+            setTextColor(primary)
+            background = rounded(Color.argb(55, 255, 255, 255), 22)
+            setOnClickListener { openDrawer() }
+        }
+        root.addView(drawerButton, LinearLayout.LayoutParams(dp(142), dp(42)).apply {
+            gravity = Gravity.CENTER
+            bottomMargin = dp(18)
+        })
+
+        val dock = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            background = rounded(Color.argb(48, 255, 255, 255), 26)
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+        }
+        val dockApps = findDockApps()
+        dockApps.forEach { app ->
+            val cell = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setOnClickListener {
+                    packageManager.getLaunchIntentForPackage(app.packageName)?.let { startActivity(it) }
+                }
+            }
+            val icon = ImageView(this).apply {
+                setImageDrawable(app.icon)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+            }
+            cell.addView(icon, LinearLayout.LayoutParams(dp(42), dp(42)))
+            dock.addView(cell, LinearLayout.LayoutParams(0, dp(58), 1f))
+        }
+        root.addView(dock, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(78)))
+        setContentView(root)
+        root.alpha = 0f
+        root.animate().alpha(1f).setDuration(180).start()
+    }
+
+    private fun rounded(color: Int, radius: Int) = GradientDrawable().apply {
+        setColor(color)
+        cornerRadius = dp(radius).toFloat()
+    }
+
+    private fun findDockApps(): List<AppEntry> {
+        val preferred = listOf(
+            listOf("com.google.android.dialer", "com.samsung.android.dialer"),
+            listOf("com.google.android.apps.messaging", "com.samsung.android.messaging"),
+            listOf("com.android.chrome"),
+            listOf("com.sec.android.app.camera", "com.android.camera2")
+        )
+        val result = mutableListOf<AppEntry>()
+        preferred.forEach { candidates ->
+            val found = candidates.firstNotNullOfOrNull { pkg ->
+                try {
+                    val info = packageManager.getApplicationInfo(pkg, 0)
+                    if (packageManager.getLaunchIntentForPackage(pkg) == null) null
+                    else AppEntry(packageManager.getApplicationLabel(info).toString(), pkg, packageManager.getApplicationIcon(info))
+                } catch (_: Exception) { null }
+            }
+            if (found != null) result.add(found)
+        }
+        return result
+    }
+
     private fun allApps(): List<AppEntry> {
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         return packageManager.queryIntentActivities(intent, 0)
-            .map { info ->
-                AppEntry(info.loadLabel(packageManager).toString(), info.activityInfo.packageName, info.loadIcon(packageManager))
-            }
+            .map { info -> AppEntry(info.loadLabel(packageManager).toString(), info.activityInfo.packageName, info.loadIcon(packageManager)) }
             .distinctBy { it.packageName }
             .sortedBy { it.label.lowercase(Locale.getDefault()) }
     }
 
-    private fun render() {
+    private fun openDrawer() {
+        if (drawerOpen) return
+        drawerOpen = true
         val apps = allApps()
-        val outer = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setBackgroundColor(this@MainActivity.background)
-            setPadding(dp(22), dp(28), dp(10), dp(12))
+        val page = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = wallpaperBackground()
+            setPadding(dp(20), dp(28), dp(20), dp(12))
         }
-        content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        outer.addView(content, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-
-        val clock = label(SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date()), 42f, primary, true)
-        content.addView(clock)
-        content.addView(label(SimpleDateFormat("EEEE, d MMMM", Locale.getDefault()).format(Date()).uppercase(Locale.getDefault()), 11f, muted).apply {
-            letterSpacing = 0.08f
-            setPadding(0, dp(2), 0, dp(20))
-        })
-        content.addView(label("NEXUS", 13f, red, true).apply {
-            letterSpacing = 0.24f
-            setPadding(0, 0, 0, dp(12))
-        })
+        val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val back = label("‹", 34f, primary).apply { setOnClickListener { showHome() } }
+        top.addView(back, LinearLayout.LayoutParams(dp(42), dp(48)))
+        top.addView(label("ALL APPS", 14f, primary, true).apply { letterSpacing = 0.12f })
+        page.addView(top)
 
         val search = EditText(this).apply {
             hint = "Search apps"
@@ -93,110 +200,70 @@ class MainActivity : Activity() {
             background = rounded(Color.rgb(34, 32, 40), 18)
             setPadding(dp(16), 0, dp(16), 0)
         }
-        content.addView(search, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
+        page.addView(search, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply { topMargin = dp(12) })
+        drawerScroll = ScrollView(this).apply {
+            isFillViewport = true
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+        }
+        drawerContent = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(14), 0, dp(28))
+        }
+        drawerScroll.addView(drawerContent)
+        page.addView(drawerScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        setContentView(page)
+        renderApps(apps, "")
         search.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                query = s?.toString()?.trim().orEmpty()
-                buildAppList(apps)
-            }
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { renderApps(apps, s?.toString().orEmpty()) }
             override fun afterTextChanged(s: Editable?) {}
         })
-
-        scroll = ScrollView(this).apply { isFillViewport = true; clipToPadding = false }
-        content.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        alphabetRail = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(dp(4), dp(10), 0, dp(10))
-        }
-        outer.addView(alphabetRail, LinearLayout.LayoutParams(dp(24), ViewGroup.LayoutParams.MATCH_PARENT))
-        setContentView(outer)
-        buildAppList(apps)
+        page.alpha = 0f
+        page.animate().alpha(1f).setDuration(160).start()
     }
 
-    private fun buildAppList(apps: List<AppEntry>) {
-        val list = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(20), dp(6), dp(28))
-        }
-        sectionViews.clear()
-        val filtered = apps.filter { it.label.contains(query, ignoreCase = true) }
-        if (query.isEmpty()) {
-            val pinned = filtered.filter { favorites.contains(it.packageName) }
-            if (pinned.isNotEmpty()) {
-                list.addView(label("FAVOURITES", 11f, red, true).apply {
-                    letterSpacing = 0.12f
-                    setPadding(0, 0, 0, dp(8))
-                })
-                pinned.forEach { list.addView(appRow(it), rowParams()) }
-                list.addView(label("ALL APPS", 11f, muted, true).apply {
-                    letterSpacing = 0.12f
-                    setPadding(0, dp(22), 0, dp(8))
-                })
+    private fun renderApps(apps: List<AppEntry>, query: String) {
+        drawerContent.removeAllViews()
+        val filtered = apps.filter { it.label.contains(query, true) }
+        filtered.forEach { app ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(4), 0, dp(4), 0)
+                setOnClickListener { packageManager.getLaunchIntentForPackage(app.packageName)?.let { startActivity(it) } }
             }
+            row.addView(ImageView(this).apply { setImageDrawable(app.icon) }, LinearLayout.LayoutParams(dp(32), dp(32)))
+            row.addView(label(app.label, 16f, primary).apply { setPadding(dp(14), 0, 0, 0) })
+            drawerContent.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)))
         }
-
-        val visibleApps = if (query.isEmpty()) filtered.filterNot { favorites.contains(it.packageName) } else filtered
-        val groups = visibleApps.groupBy { it.label.firstOrNull()?.uppercaseChar() ?: '#' }.toSortedMap()
-        groups.forEach { (letter, entries) ->
-            val heading = label(letter.toString(), 13f, red, true).apply {
-                setPadding(0, dp(12), 0, dp(5))
-            }
-            sectionViews[letter] = heading
-            list.addView(heading)
-            entries.forEach { list.addView(appRow(it), rowParams()) }
-        }
-        if (filtered.isEmpty()) {
-            list.addView(label("No apps found", 14f, muted).apply { setPadding(0, dp(24), 0, 0) })
-        }
-        scroll.removeAllViews()
-        scroll.addView(list)
-        buildAlphabetRail(groups.keys.toList())
+        if (filtered.isEmpty()) drawerContent.addView(label("No apps found", 14f, muted))
     }
 
-    private fun rowParams() = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52))
-
-    private fun appRow(app: AppEntry): View {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(2), 0, dp(6), 0)
-        }
-        val icon = ImageView(this).apply { setImageDrawable(app.icon); scaleType = ImageView.ScaleType.FIT_CENTER }
-        row.addView(icon, LinearLayout.LayoutParams(dp(30), dp(30)))
-        val name = label(app.label, 16f, primary).apply { setPadding(dp(14), 0, 0, 0) }
-        row.addView(name, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        if (favorites.contains(app.packageName)) row.addView(label("★", 17f, red))
-        row.setOnClickListener {
-            packageManager.getLaunchIntentForPackage(app.packageName)?.let { startActivity(it) }
-        }
-        row.setOnLongClickListener {
-            if (!favorites.add(app.packageName)) favorites.remove(app.packageName)
-            getSharedPreferences("nexus", MODE_PRIVATE).edit().putStringSet("favorites", favorites.toSet()).apply()
-            buildAppList(allApps())
-            true
-        }
-        return row
+    private fun showLauncherChoice() {
+        if (isFinishing || drawerOpen) return
+        AlertDialog.Builder(this)
+            .setTitle("Choose your home app")
+            .setMessage("Would you like to use Nexus Launcher or keep your current Android launcher?")
+            .setPositiveButton("Nexus Launcher") { _, _ ->
+                getSharedPreferences("nexus", MODE_PRIVATE).edit().putBoolean("launcher_choice_shown", true).apply()
+                requestHomeRole()
+            }
+            .setNegativeButton("Keep current launcher") { _, _ ->
+                getSharedPreferences("nexus", MODE_PRIVATE).edit().putBoolean("launcher_choice_shown", true).apply()
+                finish()
+            }
+            .setCancelable(false)
+            .show()
     }
 
-    private fun buildAlphabetRail(letters: List<Char>) {
-        alphabetRail.removeAllViews()
-        if (query.isNotEmpty()) return
-        val railLetters = listOf('★') + ('A'..'Z').toList()
-        railLetters.forEach { letter ->
-            val item = label(letter.toString(), 9f, if (letters.contains(letter) || letter == '★') red else Color.rgb(90, 88, 98), true).apply {
-                gravity = Gravity.CENTER
-                setOnClickListener {
-                    if (letter == '★') {
-                        scroll.post { scroll.smoothScrollTo(0, 0) }
-                    } else {
-                        val target = sectionViews[letter]
-                        if (target != null) scroll.post { scroll.smoothScrollTo(0, target.top) }
-                    }
-                }
+    private fun requestHomeRole() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val roleManager = getSystemService(RoleManager::class.java)
+            if (roleManager != null && !roleManager.isRoleHeld(RoleManager.ROLE_HOME)) {
+                startActivityForResult(roleManager.createRequestRoleIntent(RoleManager.ROLE_HOME), 42)
             }
-            alphabetRail.addView(item, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        } else {
+            startActivity(Intent("android.settings.HOME_SETTINGS"))
         }
     }
 }
