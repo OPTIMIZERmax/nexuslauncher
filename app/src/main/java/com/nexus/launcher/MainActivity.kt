@@ -137,7 +137,8 @@ class MainActivity : Activity() {
             }
         }
 
-        val groups = filtered.groupBy { it.label.firstOrNull()?.uppercaseChar() ?: '#' }.toSortedMap()
+        val visibleApps = if (query.isEmpty()) filtered.filterNot { favorites.contains(it.packageName) } else filtered
+        val groups = visibleApps.groupBy { it.label.firstOrNull()?.uppercaseChar() ?: '#' }.toSortedMap()
         groups.forEach { (letter, entries) ->
             val heading = label(letter.toString(), 13f, red, true).apply {
                 setPadding(0, dp(12), 0, dp(5))
